@@ -5,11 +5,13 @@ from PIL import Image
 import torchvision.transforms as transforms
 import sys
 from torchvision.utils import save_image, make_grid
-
+from ts.torch_handler.base_handler import BaseHandler
 from torch.autograd import Variable
 import torch.nn as nn
-from utils import calc_psnr
-
+from .utils import calc_psnr
+from PIL import Image
+import requests
+from io import BytesIO
 
 class SRCNN(nn.Module):
     def __init__(self, num_channels=1):
@@ -49,10 +51,10 @@ class SRCNN(nn.Module):
         optimizer = torch.optim.Adam(self.parameters(), lr=config.lr, betas=(config.b1, config.b2))
         Tensor = torch.cuda.FloatTensor if cuda else torch.Tensor
 
-        train_psnr_log = []
-        train_loss_log = []
-        valid_psnr_log = []
-        valid_loss_log = []
+        self.train_psnr_log = []
+        self.train_loss_log = []
+        self.valid_psnr_log = []
+        self.valid_loss_log = []
 
         # ----------
         #  Training
@@ -91,8 +93,8 @@ class SRCNN(nn.Module):
 
                 batches_done = epoch * len(train_loader) + i
                 if batches_done % config.sample_interval == 0:
-                    train_loss_log.append(avg_loss)
-                    train_psnr_log.append(avg_psnr)            
+                    self.train_loss_log.append(avg_loss)
+                    self.train_psnr_log.append(avg_psnr)            
                     avg_loss = 0
                     avg_psnr = 0
                     for j, imgs in enumerate(validation_loader):
@@ -111,11 +113,59 @@ class SRCNN(nn.Module):
                         img_grid = torch.cat((imgs_lr, imgs_sr, imgs_hr), -1)
                         save_image(img_grid, config.results + "/validation_%d.png" % batches_done, normalize=False)
                     
-                    valid_loss_log.append(avg_loss)
-                    valid_psnr_log.append(avg_psnr)
+                    self.valid_loss_log.append(avg_loss)
+                    self.valid_psnr_log.append(avg_psnr)
                     
 
             if config.checkpoint_interval != -1 and epoch % config.checkpoint_interval == 0:
                 # Save model checkpoints
                 torch.save(self.state_dict(), config.model_checkpoint_dir + "srcnn_%d.pth" % epoch)
+
+
+
+
+
+
+
+class serveHandler(BaseHandler):
+
+    def preprocess(self, data):
+        """
+        Preprocess function to convert the request input to a tensor(Torchserve supported format).
+        The user needs to override to customize the pre-processing
+        Args :
+            data (list): List of the data from the request input.
+        Returns:
+            tensor: Returns the tensor data of the input
+        """
+        self.lr_transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
+
+        image_url = data[0]['body']['url']
+
+        response = requests.get(image_url)
+        img = Image.open(BytesIO(response.content))
+        print(np.array(img).shape)
+        # print(data.shape)
+        img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        data = torch.ones((16,64))
+        return torch.as_tensor(data, device=self.device)
+
+    def postprocess(self, data):
+        """
+        The post process function makes use of the output from the inference and converts into a
+        Torchserve supported response output.
+        Args:
+            data (Torch Tensor): The torch tensor received from the prediction output of the model.
+        Returns:
+            List: The post process function returns a list of the predicted output.
+        """
+        
+        data = torch.argmax(data,axis=1)
+        print(data.tolist())
+        return [data.tolist()]
 
