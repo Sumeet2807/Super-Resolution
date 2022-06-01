@@ -136,4 +136,6 @@ validation/
 .vs
 images/
 checkpoint/
+test.ipynb
+
 

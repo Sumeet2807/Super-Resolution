@@ -12,6 +12,60 @@ from .utils import calc_psnr
 from PIL import Image
 import requests
 from io import BytesIO
+import glob
+import numpy as np
+
+import torch
+from torch.utils.data import Dataset
+from PIL import Image
+import torchvision.transforms as transforms
+
+
+
+
+
+def preprocess(img,mean,std):
+    width, height = img.size
+    in_transform  =  transforms.Compose(
+            [
+                transforms.Resize((width*2, height*2), Image.BICUBIC),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
+
+
+class SrcnnImageDataset(Dataset):
+    def __init__(self, root, hr_shape, lr_factor):
+        hr_height, hr_width = hr_shape
+        # Transforms for low resolution images and high resolution images
+        self.lr_transform = transforms.Compose(
+            [
+                transforms.Resize((hr_height // lr_factor, hr_height // lr_factor), Image.BICUBIC),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
+        self.hr_transform = transforms.Compose(
+            [
+                transforms.Resize((hr_height, hr_height), Image.BICUBIC),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
+
+        self.files = sorted(glob.glob(root + "/*.png"))
+
+    def __getitem__(self, index):
+        img = Image.open(self.files[index % len(self.files)])
+        img_lr = self.lr_transform(img)
+        img_hr = self.hr_transform(img)
+
+        return {"lr": img_lr, "hr": img_hr}
+
+    def __len__(self):
+        return len(self.files)
+
 
 class SRCNN(nn.Module):
     def __init__(self, num_channels=1):
@@ -35,7 +89,7 @@ class SRCNN(nn.Module):
 
         hr_shape = (config.hr_height, config.hr_width)
 
-        bicubic_upscaler = transforms.Resize((config.hr_width, config.hr_height), Image.BICUBIC)
+        # bicubic_upscaler = transforms.Resize((config.hr_width, config.hr_height), Image.BICUBIC)
         # Losses
         criterion_loss = torch.nn.MSELoss()
 
